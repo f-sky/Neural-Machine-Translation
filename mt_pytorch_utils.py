@@ -76,9 +76,9 @@ class Attention(nn.Module):
 
     def forward(self, s: torch.Tensor, a):
         # after this, we have (batch, dim1) with a diff weight per each cell
-        srep = s.reshape((1, n_s, 1)).repeat([1, 1, Tx])
-        concat = torch.cat((srep, a))
-        z = [self.denses1[i](concat[i]) for i in range(Tx)]
+        srep = s.reshape((1, 1, n_s)).repeat([1, Tx, 1])
+        concat = torch.cat((srep, a), dim=2)
+        z = [self.denses1[i](concat[:, i, :]) for i in range(Tx)]
         z = [self.tanh(z[i]) for i in range(Tx)]
         z = [self.denses2[i](z[i]) for i in range(Tx)]
         z = [self.relu(z[i]) for i in range(Tx)]
