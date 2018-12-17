@@ -52,7 +52,7 @@ class MTDataset(Dataset):
     def __getitem__(self, index):
         idx = index if self.train else self.num_train + index
         x = self.lib.Xoh[idx]
-        y = self.lib.Yoh[idx]
+        y = self.lib.Y[idx]
         return torch.FloatTensor(x), torch.LongTensor(y)
 
     def __len__(self):
@@ -84,7 +84,8 @@ class Attention(nn.Module):
         z = [self.relu(z[i]) for i in range(Tx)]
         z = torch.cat(z, dim=1)
         z = self.softmax(z)
-        return z @ a
+        z = z.unsqueeze(-1)
+        return (z * a).sum(dim=1)
 
 
 class MTModel(Module):
@@ -99,16 +100,16 @@ class MTModel(Module):
 
     def forward(self, x):
         a, _ = self.pre_lstm(x)
-        s = torch.zeros((a.shape[0], 1, n_s))
-        c = torch.zeros((a.shape[0], 1, n_s))
+        s = torch.zeros((a.shape[0], n_s), requires_grad=True)
+        c = torch.zeros((a.shape[0], n_s), requires_grad=True)
         outputs = []
         for i in range(Ty):
             context = self.attentions[i](s, a)
             s, c = self.post_lstms[i](context, (s, c))
             output = self.linears[i](s)
             output = self.softmax(output)
-            outputs.append(output)
-        return outputs
+            outputs.append(output.detach().numpy())
+        return torch.from_numpy(np.array(outputs))
 
 
 if __name__ == '__main__':
@@ -121,3 +122,4 @@ if __name__ == '__main__':
     outputs = model(x)
     print(len(outputs))
     print(outputs[0].shape)
+    print(y.shape)
