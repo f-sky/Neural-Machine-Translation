@@ -72,6 +72,6 @@ from torchvision.transforms import transforms
 
 
 if __name__ == '__main__':
-    a = torch.rand((1, 50))
-    out = nn.LSTMCell(input_size=50, hidden_size=30)(a)
-    print()
+    a = torch.rand(30)
+    b = torch.rand((1, 30, 64))
+    print((a @ b).shape)

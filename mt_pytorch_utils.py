@@ -72,17 +72,17 @@ class Attention(nn.Module):
         self.tanh = nn.Tanh()
         self.denses2 = [nn.Linear(in_features=10, out_features=1) for _ in range(Tx)]
         self.relu = nn.ReLU()
-        self.softmax = nn.Softmax()
+        self.softmax = nn.Softmax(dim=-1)
 
     def forward(self, s: torch.Tensor, a):
         # after this, we have (batch, dim1) with a diff weight per each cell
-        srep = s.reshape((1, 1, n_s)).repeat([1, Tx, 1])
+        srep = s.reshape((-1, 1, n_s)).repeat([1, Tx, 1])
         concat = torch.cat((srep, a), dim=2)
         z = [self.denses1[i](concat[:, i, :]) for i in range(Tx)]
         z = [self.tanh(z[i]) for i in range(Tx)]
         z = [self.denses2[i](z[i]) for i in range(Tx)]
         z = [self.relu(z[i]) for i in range(Tx)]
-        z = torch.Tensor(z)
+        z = torch.cat(z, dim=1)
         z = self.softmax(z)
         return z @ a
 
@@ -93,14 +93,14 @@ class MTModel(Module):
         super().__init__()
         self.pre_lstm = nn.LSTM(input_size=37, hidden_size=n_a, bidirectional=True, batch_first=True)
         self.attentions = [Attention() for _ in range(Ty)]
-        self.post_lstms = [nn.LSTMCell(input_size=n_a, hidden_size=n_s)]
+        self.post_lstms = [nn.LSTMCell(input_size=n_s, hidden_size=n_s) for _ in range(Ty)]
         self.linears = [nn.Linear(in_features=n_s, out_features=11) for _ in range(Ty)]
-        self.softmax = nn.Softmax()
+        self.softmax = nn.Softmax(dim=-1)
 
     def forward(self, x):
         a, _ = self.pre_lstm(x)
-        s = torch.zeros((1, n_s, 1))
-        c = None
+        s = torch.zeros((a.shape[0], 1, n_s))
+        c = torch.zeros((a.shape[0], 1, n_s))
         outputs = []
         for i in range(Ty):
             context = self.attentions[i](s, a)
@@ -117,4 +117,7 @@ if __name__ == '__main__':
     model = MTModel()
     x, y = trainset[0]
     x = x.unsqueeze(0)
-    model(x)
+    # x = x.unsqueeze(0).repeat([2, 1, 1])
+    outputs = model(x)
+    print(len(outputs))
+    print(outputs[0].shape)
