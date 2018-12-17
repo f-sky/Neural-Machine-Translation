@@ -6,10 +6,9 @@ import numpy as np
 from progressbar import progressbar
 from torch.autograd import Variable
 
-from base_utils import History, AverageMeter, save_model
+from base_utils import History, AverageMeter, save_model, load_model
 from mt_pytorch_utils import *
-
-use_gpu = False
+from cfg import *
 
 
 def fit(model, loss_fn, optimizer, dataloaders, metrics_functions=None, num_epochs=1, scheduler=None, begin_epoch=0,
@@ -41,11 +40,10 @@ def fit(model, loss_fn, optimizer, dataloaders, metrics_functions=None, num_epoc
                 x, y = data
                 # print(x.shape, y.shape)
                 nsamples = x.shape[0]
-                x_var = Variable(x.cuda()) if use_gpu else Variable(x)
-                y_var = Variable(y.cuda()) if use_gpu else Variable(y)
+                x_var = Variable(x.cuda()) if train_cfg['use_gpu'] else Variable(x)
+                y_var = Variable(y.cuda()) if train_cfg['use_gpu'] else Variable(y)
                 optimizer.zero_grad()
                 scores = model(x_var)
-                # print(scores.shape)
                 loss = loss_fn(scores.reshape((-1, 11)), y_var.reshape((-1, 1)).squeeze())
 
                 meters['loss'].update(loss.item(), nsamples)
@@ -74,19 +72,45 @@ def fit(model, loss_fn, optimizer, dataloaders, metrics_functions=None, num_epoc
 
 
 def compute_accuracy(y_true, y_pred):
-    return np.sum(np.argmax(y_pred, axis=1) == y_true) / y_true.shape[0]
+    return np.sum(np.argmax(y_pred, axis=2) == y_true) / (y_true.shape[0] * y_true.shape[1])
 
 
-if __name__ == '__main__':
+def train():
     lib = MTLib()
     trainset = MTDataset(lib, True)
     devset = MTDataset(lib, False)
     dataloaders = {'train': DataLoader(trainset, batch_size=100, shuffle=True),
                    'dev': DataLoader(devset, batch_size=100, shuffle=False)}
-    model = MTModel().cuda() if use_gpu else MTModel()
-    print(list(model.named_parameters()))
-    loss_fn = nn.CrossEntropyLoss()
-    optimizer = Adam(model.parameters())
+    model = MTModel().cuda() if train_cfg['use_gpu'] else MTModel()
+    loss_fn = nn.CrossEntropyLoss().cuda() if train_cfg['use_gpu'] else nn.CrossEntropyLoss()
+    optimizer = Adam(model.parameters(), lr=0.001)
 
     fit(model, loss_fn, optimizer, dataloaders,
-        metrics_functions={'accuracy': compute_accuracy}, num_epochs=1)
+        metrics_functions={'accuracy': compute_accuracy}, num_epochs=50)
+
+
+def test():
+    m = 10000
+    dataset, human_vocab, machine_vocab, inv_machine_vocab = load_dataset(m)
+    model = MTModel().cuda() if train_cfg['use_gpu'] else MTModel()
+    load_model(model, Adam(model.parameters()), 'data/models')
+    model.eval()
+    EXAMPLES = ['3 May 1979', '5 April 09', '21th of August 2016', 'Tue 10 Jul 2007', 'Saturday May 9 2018',
+                'March 3 2001', 'March 3rd 2001', '1 March 2001']
+    for example in EXAMPLES:
+        source = string_to_int(example, Tx, human_vocab)
+
+        source = np.array(list(map(lambda x: to_categorical(x, num_classes=len(human_vocab)), source)))
+        source = source[np.newaxis, :]
+        source = torch.from_numpy(source).cuda()
+        prediction = model(source)
+        prediction = np.argmax(prediction.detach().cpu().numpy(), axis=-1).squeeze()
+        output = [inv_machine_vocab[int(i)] for i in prediction]
+
+        print("source:", example)
+        print("output:", ''.join(output))
+
+
+if __name__ == '__main__':
+    train()
+    test()

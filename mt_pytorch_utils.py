@@ -12,6 +12,7 @@ from torch.optim import lr_scheduler, Adam
 from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms import transforms
 
+from cfg import train_cfg
 from nmt_utils import *
 
 n_a = 32
@@ -68,9 +69,9 @@ def new_parameter(*size):
 class Attention(nn.Module):
     def __init__(self):
         super(Attention, self).__init__()
-        self.denses1 = [nn.Linear(in_features=2 * n_a + n_s, out_features=10) for _ in range(Tx)]
+        self.dense1 = nn.Linear(in_features=2 * n_a + n_s, out_features=10)
         self.tanh = nn.Tanh()
-        self.denses2 = [nn.Linear(in_features=10, out_features=1) for _ in range(Tx)]
+        self.dense2 = nn.Linear(in_features=10, out_features=1)
         self.relu = nn.ReLU()
         self.softmax = nn.Softmax(dim=-1)
 
@@ -78,14 +79,33 @@ class Attention(nn.Module):
         # after this, we have (batch, dim1) with a diff weight per each cell
         srep = s.reshape((-1, 1, n_s)).repeat([1, Tx, 1])
         concat = torch.cat((srep, a), dim=2)
-        z = [self.denses1[i](concat[:, i, :]) for i in range(Tx)]
-        z = [self.tanh(z[i]) for i in range(Tx)]
-        z = [self.denses2[i](z[i]) for i in range(Tx)]
-        z = [self.relu(z[i]) for i in range(Tx)]
-        z = torch.cat(z, dim=1)
+        z = self.dense1(concat)
+        z = self.tanh(z)
+        z = self.dense2(z)
+        z = self.relu(z)
+        # z = torch.cat(z, dim=1)
         z = self.softmax(z)
-        z = z.unsqueeze(-1)
+        # z = z.unsqueeze(-1)
         return (z * a).sum(dim=1)
+
+
+class Decoder(Module):
+
+    def __init__(self):
+        super().__init__()
+        self.attention = Attention()
+        if train_cfg['use_gpu']:
+            self.attention = self.attention.cuda()
+        self.post_lstm = nn.LSTMCell(input_size=n_s, hidden_size=n_s)
+        self.linear = nn.Linear(in_features=n_s, out_features=11)
+        self.softmax = nn.Softmax(dim=-1)
+
+    def forward(self, s, c, a):
+        context = self.attention(s, a)
+        s, c = self.post_lstm(context, (s, c))
+        output = self.linear(s)
+        output = self.softmax(output)
+        return s, c, output
 
 
 class MTModel(Module):
@@ -93,23 +113,24 @@ class MTModel(Module):
     def __init__(self):
         super().__init__()
         self.pre_lstm = nn.LSTM(input_size=37, hidden_size=n_a, bidirectional=True, batch_first=True)
-        self.attentions = [Attention() for _ in range(Ty)]
-        self.post_lstms = [nn.LSTMCell(input_size=n_s, hidden_size=n_s) for _ in range(Ty)]
-        self.linears = [nn.Linear(in_features=n_s, out_features=11) for _ in range(Ty)]
-        self.softmax = nn.Softmax(dim=-1)
+        self.decoder = Decoder()
+        if train_cfg['use_gpu']:
+            self.decoder = self.decoder.cuda()
 
     def forward(self, x):
         a, _ = self.pre_lstm(x)
+        batch_size = a.shape[0]
         s = torch.zeros((a.shape[0], n_s), requires_grad=True)
         c = torch.zeros((a.shape[0], n_s), requires_grad=True)
-        outputs = []
+        if train_cfg['use_gpu']:
+            s = s.cuda()
+            c = c.cuda()
+        outputs = torch.zeros((batch_size, Ty, 11))
+        outputs = outputs.cuda() if train_cfg['use_gpu'] else outputs
         for i in range(Ty):
-            context = self.attentions[i](s, a)
-            s, c = self.post_lstms[i](context, (s, c))
-            output = self.linears[i](s)
-            output = self.softmax(output)
-            outputs.append(output.detach().numpy())
-        return torch.from_numpy(np.array(outputs))
+            s, c, output = self.decoder(s, c, a)
+            outputs[:, i, :] = output
+        return outputs
 
 
 if __name__ == '__main__':
@@ -119,7 +140,7 @@ if __name__ == '__main__':
     x, y = trainset[0]
     x = x.unsqueeze(0)
     # x = x.unsqueeze(0).repeat([2, 1, 1])
+    print(x.shape,y.shape)
     outputs = model(x)
-    print(len(outputs))
-    print(outputs[0].shape)
+    print(outputs.shape)
     print(y.shape)
