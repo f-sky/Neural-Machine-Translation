@@ -99,8 +99,3 @@ def save_model(net, optim, epoch, model_dir, history=None):
 def read_csv(filename):
     with open(filename) as csvDataFile:
         return np.array(list(csv.reader(csvDataFile)))
-
-
-def to_categorical(y, num_classes):
-    """ 1-hot encodes a tensor """
-    return np.eye(num_classes, dtype='uint8')[y]

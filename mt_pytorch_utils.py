@@ -10,8 +10,10 @@ from torch.autograd import backward, Variable
 from torch.nn.functional import softmax
 from torch.optim import lr_scheduler, Adam
 from torch.utils.data import Dataset, DataLoader
+from torchvision.models import resnet18
 from torchvision.transforms import transforms
 
+from base_utils import load_model
 from cfg import train_cfg
 from nmt_utils import *
 
@@ -34,10 +36,8 @@ class MTLib:
         self.Y = Y
         self.Xoh = Xoh
         self.Yoh = Yoh
-        # print(X.shape)
-        # print(Y.shape)
-        # print(Xoh.shape)
-        # print(Yoh.shape)
+        self.human_vocab = human_vocab
+        self.inv_machine_vocab = inv_machine_vocab
 
 
 class MTDataset(Dataset):
@@ -74,6 +74,7 @@ class Attention(nn.Module):
         self.dense2 = nn.Linear(in_features=10, out_features=1)
         self.relu = nn.ReLU()
         self.softmax = nn.Softmax(dim=-1)
+        self.return_alphas = False
 
     def forward(self, s: torch.Tensor, a):
         # after this, we have (batch, dim1) with a diff weight per each cell
@@ -83,10 +84,12 @@ class Attention(nn.Module):
         z = self.tanh(z)
         z = self.dense2(z)
         z = self.relu(z)
-        # z = torch.cat(z, dim=1)
         z = self.softmax(z)
-        # z = z.unsqueeze(-1)
-        return (z * a).sum(dim=1)
+        context = (z * a).sum(dim=1)
+        if not self.return_alphas:
+            return context
+        else:
+            return context, z
 
 
 class Decoder(Module):
@@ -101,11 +104,16 @@ class Decoder(Module):
         self.softmax = nn.Softmax(dim=-1)
 
     def forward(self, s, c, a):
-        context = self.attention(s, a)
+        result = self.attention(s, a)
+        if self.attention.return_alphas:
+            context, alphas = result
+        else:
+            context = result
+            alphas = None
         s, c = self.post_lstm(context, (s, c))
         output = self.linear(s)
         output = self.softmax(output)
-        return s, c, output
+        return s, c, output, alphas
 
 
 class MTModel(Module):
@@ -116,6 +124,7 @@ class MTModel(Module):
         self.decoder = Decoder()
         if train_cfg['use_gpu']:
             self.decoder = self.decoder.cuda()
+        self.alphas = []
 
     def forward(self, x):
         a, _ = self.pre_lstm(x)
@@ -128,19 +137,93 @@ class MTModel(Module):
         outputs = torch.zeros((batch_size, Ty, 11))
         outputs = outputs.cuda() if train_cfg['use_gpu'] else outputs
         for i in range(Ty):
-            s, c, output = self.decoder(s, c, a)
+            s, c, output, alpha = self.decoder(s, c, a)
+            self.alphas.append(alpha)
             outputs[:, i, :] = output
         return outputs
+
+    def predict(self, lib: MTLib, sentence):
+        human_vocab = lib.human_vocab
+        source = string_to_int(sentence, Tx, lib.human_vocab)
+
+        source = np.array(list(map(lambda x: to_categorical(x, num_classes=len(human_vocab)), source)))
+        source = source[np.newaxis, :]
+        source = torch.from_numpy(source).cuda()
+        prediction = self(source)
+        prediction = np.argmax(prediction.detach().cpu().numpy(), axis=-1).squeeze()
+        output = [lib.inv_machine_vocab[int(i)] for i in prediction]
+        return output
+
+
+def plot_attention_map(model: MTModel, lib, text, n_s=128, Tx=30, Ty=10):
+    """
+    Plot the attention map. not work for pytorch yet.
+
+    """
+    attention_map = np.zeros((10, 30))
+    Ty, Tx = attention_map.shape
+
+    # s0 = np.zeros((1, n_s))
+    # c0 = np.zeros((1, n_s))
+
+    encoded = np.array(string_to_int(text, Tx, lib.human_vocab)).reshape((1, 30))
+    encoded = np.array(list(map(lambda x: to_categorical(x, num_classes=len(lib.human_vocab)), encoded)))
+    model.alphas = []
+    model.decoder.attention.return_alphas = True
+    model(torch.from_numpy(encoded).cuda())
+    r = model.alphas
+
+    for t in range(Ty):
+        for t_prime in range(Tx):
+            attention_map[t][t_prime] = r[t][0, t_prime, 0]
+
+    # Normalize attention map
+    #     row_max = attention_map.max(axis=1)
+    #     attention_map = attention_map / row_max[:, None]
+
+    predicted_text = model.predict(lib, text)
+
+    text_ = list(text)
+
+    # get the lengths of the string
+    input_length = len(text)
+    output_length = Ty
+
+    # Plot the attention_map
+    plt.clf()
+    f = plt.figure(figsize=(8, 8.5))
+    ax = f.add_subplot(1, 1, 1)
+
+    # add image
+    i = ax.imshow(attention_map, interpolation='nearest', cmap='Blues')
+
+    # add colorbar
+    cbaxes = f.add_axes([0.2, 0, 0.6, 0.03])
+    cbar = f.colorbar(i, cax=cbaxes, orientation='horizontal')
+    cbar.ax.set_xlabel('Alpha value (Probability output of the "softmax")', labelpad=2)
+
+    # add labels
+    ax.set_yticks(range(output_length))
+    ax.set_yticklabels(predicted_text[:output_length])
+
+    ax.set_xticks(range(input_length))
+    ax.set_xticklabels(text_[:input_length], rotation=45)
+
+    ax.set_xlabel('Input Sequence')
+    ax.set_ylabel('Output Sequence')
+
+    # add grid and legend
+    ax.grid()
+
+    f.show()
+
+    return attention_map
 
 
 if __name__ == '__main__':
     lib = MTLib()
-    trainset = MTDataset(lib, True)
-    model = MTModel()
-    x, y = trainset[0]
-    x = x.unsqueeze(0)
-    # x = x.unsqueeze(0).repeat([2, 1, 1])
-    print(x.shape,y.shape)
-    outputs = model(x)
-    print(outputs.shape)
-    print(y.shape)
+    model = MTModel().cuda() if train_cfg['use_gpu'] else MTModel()
+    load_model(model, Adam(model.parameters()), 'data/models')
+    model.eval()
+    plot_attention_map(model, lib,
+                       "Tuesday 09 Oct 1993", n_s=64)
