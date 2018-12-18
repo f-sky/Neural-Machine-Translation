@@ -76,9 +76,15 @@ def train():
     model = MTModel().cuda() if train_cfg['use_gpu'] else MTModel()
     loss_fn = nn.CrossEntropyLoss().cuda() if train_cfg['use_gpu'] else nn.CrossEntropyLoss()
     optimizer = Adam(model.parameters(), lr=0.01)
-    scheduler = lr_scheduler.StepLR(optimizer, 30)
-    fit(model, loss_fn, optimizer, dataloaders, scheduler=scheduler,
-        metrics_functions={'accuracy': compute_accuracy}, num_epochs=50)
+    if train_cfg['resume']:
+        begin_epoch = load_model(model, optimizer, 'data/models')
+    else:
+        begin_epoch = 0
+    optimizer = Adam(model.parameters(), lr=0.001)
+    # scheduler = lr_scheduler.StepLR(optimizer, 30, 0.3)
+    fit(model, loss_fn, optimizer, dataloaders, scheduler=None,
+        metrics_functions={'accuracy': compute_accuracy}, num_epochs=10,
+        begin_epoch=begin_epoch)
 
 
 def test():
@@ -94,7 +100,16 @@ def test():
         print("output:", ''.join(output))
 
 
-if __name__ == '__main__':
-    # train()
-    test()
+def visualize_attention_map():
+    lib = MTLib()
+    model = MTModel().cuda() if train_cfg['use_gpu'] else MTModel()
+    load_model(model, Adam(model.parameters()), 'data/models')
+    model.eval()
+    plot_attention_map(model, lib,
+                       "1 March 2001", n_s=64)
 
+
+if __name__ == '__main__':
+    train()
+    test()
+    visualize_attention_map()

@@ -71,7 +71,10 @@ class Attention(nn.Module):
         super(Attention, self).__init__()
         self.dense1 = nn.Linear(in_features=2 * n_a + n_s, out_features=10)
         self.tanh = nn.Tanh()
-        self.dense2 = nn.Linear(in_features=10, out_features=1)
+        # self.dense2 = nn.Linear(in_features=10, out_features=1)
+        self.v = nn.Parameter(torch.rand(10))
+        stdv = 1. / np.math.sqrt(self.v.size(0))
+        self.v.data.uniform_(-stdv, stdv)
         self.relu = nn.ReLU()
         self.softmax = nn.Softmax(dim=-1)
         self.return_alphas = False
@@ -81,11 +84,12 @@ class Attention(nn.Module):
         srep = s.reshape((-1, 1, n_s)).repeat([1, Tx, 1])
         concat = torch.cat((srep, a), dim=2)
         z = self.dense1(concat)
-        z = self.tanh(z)
-        z = self.dense2(z)
-        z = self.relu(z)
+        z = self.tanh(z).transpose(1, 2)
+        v = self.v.repeat(a.size(0), 1).unsqueeze(1)  # [B*1*H]
+        energy = torch.bmm(v, z)  # [B*1*T]
+        z = self.relu(energy)
         z = self.softmax(z)
-        context = (z * a).sum(dim=1)
+        context = torch.bmm(z, a).squeeze(1)
         if not self.return_alphas:
             return context
         else:
@@ -175,7 +179,7 @@ def plot_attention_map(model: MTModel, lib, text, n_s=128, Tx=30, Ty=10):
 
     for t in range(Ty):
         for t_prime in range(Tx):
-            attention_map[t][t_prime] = r[t][0, t_prime, 0]
+            attention_map[t][t_prime] = r[t][0, 0, t_prime]
 
     # Normalize attention map
     #     row_max = attention_map.max(axis=1)
@@ -219,11 +223,3 @@ def plot_attention_map(model: MTModel, lib, text, n_s=128, Tx=30, Ty=10):
 
     return attention_map
 
-
-if __name__ == '__main__':
-    lib = MTLib()
-    model = MTModel().cuda() if train_cfg['use_gpu'] else MTModel()
-    load_model(model, Adam(model.parameters()), 'data/models')
-    model.eval()
-    plot_attention_map(model, lib,
-                       "Tuesday 09 Oct 1993", n_s=64)

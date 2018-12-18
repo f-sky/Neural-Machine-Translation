@@ -1,3 +1,4 @@
 train_cfg = {
-    'use_gpu': True
+    'use_gpu': True,
+    'resume': True,
 }
