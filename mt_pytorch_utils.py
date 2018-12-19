@@ -87,8 +87,8 @@ class Attention(nn.Module):
         z = self.tanh(z).transpose(1, 2)
         v = self.v.repeat(a.size(0), 1).unsqueeze(1)  # [B*1*H]
         energy = torch.bmm(v, z)  # [B*1*T]
-        z = self.relu(energy)
-        z = self.softmax(z)
+        # z = self.relu(energy)
+        z = self.softmax(energy)
         context = torch.bmm(z, a).squeeze(1)
         if not self.return_alphas:
             return context

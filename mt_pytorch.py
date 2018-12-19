@@ -71,8 +71,8 @@ def train():
     lib = MTLib()
     trainset = MTDataset(lib, True)
     devset = MTDataset(lib, False)
-    dataloaders = {'train': DataLoader(trainset, batch_size=100, shuffle=True),
-                   'dev': DataLoader(devset, batch_size=100, shuffle=False)}
+    dataloaders = {'train': DataLoader(trainset, batch_size=200, shuffle=True),
+                   'dev': DataLoader(devset, batch_size=200, shuffle=False)}
     model = MTModel().cuda() if train_cfg['use_gpu'] else MTModel()
     loss_fn = nn.CrossEntropyLoss().cuda() if train_cfg['use_gpu'] else nn.CrossEntropyLoss()
     optimizer = Adam(model.parameters(), lr=0.01)
@@ -80,10 +80,10 @@ def train():
         begin_epoch = load_model(model, optimizer, 'data/models')
     else:
         begin_epoch = 0
-    optimizer = Adam(model.parameters(), lr=0.001)
-    # scheduler = lr_scheduler.StepLR(optimizer, 30, 0.3)
-    fit(model, loss_fn, optimizer, dataloaders, scheduler=None,
-        metrics_functions={'accuracy': compute_accuracy}, num_epochs=10,
+    optimizer = Adam(model.parameters(), lr=0.01)
+    scheduler = lr_scheduler.StepLR(optimizer, 100, 0.1)
+    fit(model, loss_fn, optimizer, dataloaders, scheduler=scheduler,
+        metrics_functions={'accuracy': compute_accuracy}, num_epochs=200,
         begin_epoch=begin_epoch)
 
 
